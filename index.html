@@ -1,482 +1,419 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  collection, 
-  query, 
-  addDoc, 
-  serverTimestamp,
-  updateDoc,
-  increment
-} from 'firebase/firestore';
-import { 
-  getAuth, 
-  signInAnonymously, 
-  onAuthStateChanged 
-} from 'firebase/auth';
-import { 
-  Timer, 
-  MessageSquare, 
-  Users, 
-  Trophy, 
-  Send, 
-  Play, 
-  Square, 
-  Hash,
-  User,
-  BookOpen,
-  LayoutDashboard,
-  Award,
-  ChevronRight,
-  PieChart as PieChartIcon,
-  Book,
-  Plus,
-  Edit2,
-  Check,
-  Clock
-} from 'lucide-react';
-
-// --- Firebase 配置 ---
-const firebaseConfig = {
-  apiKey: "AIzaSyDBrU-Oy70pCPXTDsis1gC-TAge0RqXrmY",
-  authDomain: "timer-9545c.firebaseapp.com",
-  databaseURL: "https://timer-9545c-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "timer-9545c",
-  storageBucket: "timer-9545c.firebasestorage.app",
-  messagingSenderId: "272069871280",
-  appId: "1:272069871280:web:c8e8e1d4d06a8542f51d75"
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const APP_ID = 'timer-9545c-study-room';
-
-const INITIAL_SUBJECTS = ["中文", "英文", "數學", "BAFS"];
-
-export default function App() {
-  const [view, setView] = useState('study'); 
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
-  const [room, setRoom] = useState('公用大廳');
-  const [currentSubject, setCurrentSubject] = useState("中文");
-  const [inputRoom, setInputRoom] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [inputMsg, setInputMsg] = useState('');
-  const [roomUsers, setRoomUsers] = useState([]);
-  const [timerSeconds, setTimerSeconds] = useState(0);
-  const [isActive, setIsActive] = useState(false);
-  
-  const [newSubject, setNewSubject] = useState('');
-  const [isEditingName, setIsEditingName] = useState(false);
-  const [newName, setNewName] = useState('');
-
-  const chatEndRef = useRef(null);
-
-  // 1. 認證與用戶數據初始化 (修正: 增加錯誤處理與掛載檢查)
-  useEffect(() => {
-    let isMounted = true;
-    signInAnonymously(auth).catch(err => console.error("Auth Error:", err));
-    
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (u && isMounted) {
-        setUser(u);
-        const userRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers', u.uid);
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>掌控粒子 · 中文字 3D 交互</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@700&display=swap');
         
-        const unsubDoc = onSnapshot(userRef, (docSnap) => {
-          if (docSnap.exists()) {
-            setUserData(docSnap.data());
-          } else {
-            setDoc(userRef, {
-              uid: u.uid,
-              displayName: `學員 ${u.uid.slice(0, 4)}`,
-              lastSeen: serverTimestamp(),
-              room: room,
-              totalStudyTime: 0,
-              subjects: {}, 
-              customSubjectList: INITIAL_SUBJECTS,
-              joinedAt: serverTimestamp()
-            });
-          }
-        });
-        return () => unsubDoc();
-      }
-    });
-    return () => { isMounted = false; unsubscribe(); };
-  }, []);
-
-  // 2. 房間位置更新 (修正: 增加 user 檢查保護)
-  useEffect(() => {
-    if (user) {
-      const userRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers', user.uid);
-      updateDoc(userRef, { room: room }).catch(e => console.log("Update room error:", e));
-    }
-  }, [room, user]);
-
-  // 3. 聊天訊息訂閱
-  useEffect(() => {
-    if (!user) return;
-    const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', `chats_${room}`));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
-      setMessages(msgs.slice(-30));
-      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-    }, (error) => console.log("Chat sync error:", error));
-    return () => unsubscribe();
-  }, [user, room]);
-
-  // 4. 排行榜訂閱
-  useEffect(() => {
-    if (!user) return;
-    const q = query(collection(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setRoomUsers(users.filter(u => u.room === room));
-    });
-    return () => unsubscribe();
-  }, [user, room]);
-
-  // 5. 計時器邏輯
-  useEffect(() => {
-    let interval = null;
-    if (isActive) {
-      interval = setInterval(() => setTimerSeconds(prev => prev + 1), 1000);
-    } else {
-      setTimerSeconds(0);
-    }
-    return () => clearInterval(interval);
-  }, [isActive]);
-
-  // 每 10 秒將數據同步到 Firestore (修正: 增加 isActive 檢查)
-  useEffect(() => {
-    if (isActive && timerSeconds > 0 && timerSeconds % 10 === 0 && user) {
-      const userRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers', user.uid);
-      updateDoc(userRef, {
-        totalStudyTime: increment(10),
-        lastSeen: serverTimestamp(),
-        [`subjects.${currentSubject}`]: increment(10)
-      }).catch(e => console.log("Study sync error:", e));
-    }
-  }, [timerSeconds, isActive, user, currentSubject]);
-
-  const handleAddSubject = () => {
-    if (!newSubject.trim() || !user || !userData) return;
-    if (userData.customSubjectList?.includes(newSubject.trim())) return;
-    
-    const userRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers', user.uid);
-    updateDoc(userRef, {
-      customSubjectList: [...(userData.customSubjectList || []), newSubject.trim()]
-    });
-    setNewSubject('');
-  };
-
-  const handleUpdateName = () => {
-    if (!newName.trim() || !user) return;
-    const userRef = doc(db, 'artifacts', APP_ID, 'public', 'data', 'onlineUsers', user.uid);
-    updateDoc(userRef, { displayName: newName.trim() });
-    setIsEditingName(false);
-  };
-
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!inputMsg.trim() || !user) return;
-    await addDoc(collection(db, 'artifacts', APP_ID, 'public', 'data', `chats_${room}`), {
-      text: inputMsg,
-      uid: user.uid,
-      timestamp: serverTimestamp(),
-      sender: userData?.displayName || `用戶_${user.uid.slice(0, 4)}`
-    });
-    setInputMsg('');
-  };
-
-  const formatToHours = (s) => {
-    return (s / 3600).toFixed(1);
-  };
-
-  const formatTime = (s) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return h > 0 ? `${h}h ${m}m ${sec}s` : `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-  };
-
-  const subjectList = userData?.customSubjectList || INITIAL_SUBJECTS;
-
-  const pieChartData = useMemo(() => {
-    if (!userData?.subjects || !userData?.totalStudyTime) return [];
-    const colors = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
-    let cumulativePercent = 0;
-    
-    const validSubjects = Object.entries(userData.subjects).filter(([_, sec]) => sec > 0);
-    
-    // 如果只有一個科目，特別處理為完整的圓
-    if (validSubjects.length === 1) {
-      const [name, sec] = validSubjects[0];
-      return [{
-        name,
-        seconds: sec,
-        percent: 100,
-        path: "M 1 0 A 1 1 0 1 1 1 -0.0001 L 0 0 Z",
-        color: colors[0]
-      }];
-    }
-
-    return validSubjects.map(([name, sec], i) => {
-        const percent = sec / userData.totalStudyTime;
-        const startX = Math.cos(2 * Math.PI * cumulativePercent);
-        const startY = Math.sin(2 * Math.PI * cumulativePercent);
-        cumulativePercent += percent;
-        const endX = Math.cos(2 * Math.PI * cumulativePercent);
-        const endY = Math.sin(2 * Math.PI * cumulativePercent);
-        const largeArcFlag = percent > 0.5 ? 1 : 0;
-
-        return {
-          name,
-          seconds: sec,
-          percent: Math.round(percent * 100),
-          path: `M 0 0 L ${startX} ${startY} A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY} Z`,
-          color: colors[i % colors.length]
-        };
-      });
-  }, [userData]);
-
-  const levelInfo = useMemo(() => {
-    const totalMinutes = Math.floor((userData?.totalStudyTime || 0) / 60);
-    if (totalMinutes < 60) return { level: '初學者', icon: '🌱', next: 60 - totalMinutes };
-    if (totalMinutes < 300) return { level: '進階學者', icon: '📘', next: 300 - totalMinutes };
-    return { level: '溫習戰神', icon: '👑', next: 0 };
-  }, [userData]);
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      <nav className="bg-white border-b border-slate-200 sticky top-0 z-50 px-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between h-16">
-          <div className="flex items-center gap-2 font-black text-xl text-indigo-600 cursor-pointer" onClick={() => setView('study')}>
-            <BookOpen size={28} />
-            <span>V-Study</span>
-          </div>
-          <div className="flex bg-slate-100 p-1 rounded-xl">
-            <button onClick={() => setView('study')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'study' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}><LayoutDashboard size={18} />溫習室</button>
-            <button onClick={() => setView('profile')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${view === 'profile' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500'}`}><User size={18} />個人檔案</button>
-          </div>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Noto Sans SC', sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        canvas {
+            display: block;
+        }
+        
+        #overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.9);
+            background: rgba(0,0,0,0.6);
+            padding: 15px 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+            z-index: 100;
+            max-width: 320px;
+            box-shadow: 0 8px 32px rgba(0, 255, 255, 0.2);
+        }
+        
+        #status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #00ffff;
+            font-size: 14px;
+            background: rgba(0,0,0,0.6);
+            padding: 8px 16px;
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            z-index: 100;
+        }
+        
+        #video {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 200px;
+            height: 150px;
+            border: 3px solid #00ffff;
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+            z-index: 100;
+            transform: scaleX(-1);
+            object-fit: cover;
+        }
+        
+        .title {
+            font-size: 28px;
+            margin: 0 0 10px 0;
+            text-shadow: 0 0 15px #00ffff;
+        }
+        
+        .hint {
+            font-size: 15px;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <!-- Three.js 渲染画布将自动插入 -->
+        
+        <!-- 摄像头预览 -->
+        <video id="video" autoplay playsinline></video>
+        
+        <!-- 左上角信息面板 -->
+        <div id="overlay">
+            <div class="title">掌控粒子</div>
+            <div class="hint">
+                📹 摄像头已开启<br>
+                ✋ 将手掌对准镜头<br>
+                👊 <strong>握拳</strong> → 粒子聚拢成「粒子」<br>
+                🖐️ <strong>张开</strong> → 粒子向四周散开<br>
+                实时 WebGL + MediaPipe 手势追踪
+            </div>
         </div>
-      </nav>
-
-      <main className="max-w-6xl mx-auto p-4 md:p-8">
-        {view === 'study' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="lg:col-span-3 space-y-6">
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                <div className="flex items-center gap-2 mb-4 text-indigo-600 font-bold"><Hash size={18} /><span>房間</span></div>
-                <h2 className="text-xl font-bold mb-4 truncate">{room}</h2>
-                <div className="flex gap-2">
-                  <input type="text" placeholder="房號..." className="w-full px-3 py-2 bg-slate-50 rounded-lg text-sm border border-slate-200 outline-none focus:ring-2 ring-indigo-500" value={inputRoom} onChange={(e) => setInputRoom(e.target.value)} />
-                  <button onClick={() => { if(inputRoom) setRoom(inputRoom); setInputRoom(''); }} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 transition-colors"><ChevronRight size={18} /></button>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-                <div className="flex items-center gap-2 mb-4 text-amber-500 font-bold"><Trophy size={18} /><span>房間排行榜</span></div>
-                <div className="space-y-3">
-                  {roomUsers.sort((a,b) => (b.totalStudyTime||0)-(a.totalStudyTime||0)).slice(0,5).map((u, idx) => (
-                    <div key={u.uid} className="flex items-center justify-between p-2 bg-slate-50 rounded-xl text-xs font-semibold">
-                      <div className="flex items-center gap-2">
-                        <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] text-white ${idx === 0 ? 'bg-yellow-400' : 'bg-slate-300'}`}>{idx + 1}</span>
-                        <span className="truncate max-w-[80px]">{u.displayName || '匿名'}</span>
-                      </div>
-                      <span className="text-indigo-600">{(u.totalStudyTime||0) >= 3600 ? `${formatToHours(u.totalStudyTime)}h` : `${Math.floor((u.totalStudyTime || 0) / 60)}m`}</span>
-                    </div>
-                  ))}
-                  {roomUsers.length === 0 && <div className="text-[10px] text-slate-400 text-center py-2">目前沒有人在這</div>}
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-6 space-y-6">
-              <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-200 flex flex-col items-center">
-                <div className="mb-6 w-full space-y-4">
-                  <div className="flex flex-wrap justify-center gap-2">
-                    {subjectList.map(sub => (
-                      <button 
-                        key={sub} 
-                        disabled={isActive}
-                        onClick={() => setCurrentSubject(sub)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${currentSubject === sub ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-indigo-300'}`}
-                      >
-                        {sub}
-                      </button>
-                    ))}
-                    <div className="flex items-center gap-1 bg-slate-50 rounded-full px-2 py-1 border border-dashed border-slate-300">
-                      <input 
-                        type="text" 
-                        placeholder="新課目..." 
-                        className="bg-transparent border-none text-[10px] outline-none w-14"
-                        value={newSubject}
-                        onChange={(e) => setNewSubject(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddSubject()}
-                      />
-                      <button onClick={handleAddSubject} className="text-indigo-600 hover:scale-110 transition-transform"><Plus size={14} /></button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-indigo-50 p-6 rounded-full mb-6 relative">
-                  <Timer size={40} className={`text-indigo-600 ${isActive ? 'animate-pulse' : ''}`} />
-                  {isActive && <div className="absolute inset-0 rounded-full border-2 border-indigo-200 animate-ping"></div>}
-                </div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">正在專注於：{currentSubject}</p>
-                <div className="text-7xl font-mono font-black text-slate-800 mb-8 tracking-tighter transition-all">
-                  {isActive ? formatTime(timerSeconds) : "00:00"}
-                </div>
-                
-                <button 
-                  onClick={() => setIsActive(!isActive)}
-                  className={`w-full max-w-xs flex items-center justify-center gap-2 py-4 rounded-2xl font-bold shadow-lg transition-all active:scale-95 ${isActive ? 'bg-rose-500 text-white shadow-rose-100 hover:bg-rose-600' : 'bg-indigo-600 text-white shadow-indigo-100 hover:bg-indigo-700'}`}
-                >
-                  {isActive ? <Square size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-                  {isActive ? '停止並結算' : '開始專注'}
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4 text-center">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">房間在線</p>
-                  <p className="text-xl font-bold">{roomUsers.length}</p>
-                </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200">
-                  <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">本科累計</p>
-                  <p className="text-xl font-bold text-indigo-600">{(userData?.subjects?.[currentSubject] || 0) >= 3600 ? `${formatToHours(userData?.subjects?.[currentSubject])}h` : `${Math.floor((userData?.subjects?.[currentSubject] || 0) / 60)}m`}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="lg:col-span-3 flex flex-col h-[500px] lg:h-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="p-4 border-b border-slate-100 bg-slate-50/50 font-bold text-slate-700 text-sm">即時討論區</div>
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.map((m) => (
-                  <div key={m.id} className={`flex flex-col ${m.uid === user?.uid ? 'items-end' : 'items-start'}`}>
-                    <span className="text-[9px] text-slate-400 mb-0.5">{m.sender}</span>
-                    <div className={`max-w-[90%] px-3 py-2 rounded-2xl text-xs break-words shadow-sm ${m.uid === user?.uid ? 'bg-indigo-600 text-white' : 'bg-slate-100'}`}>{m.text}</div>
-                  </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
-              <form onSubmit={handleSendMessage} className="p-4 border-t flex gap-2">
-                <input type="text" placeholder="輸入訊息..." className="flex-1 px-3 py-2 bg-slate-100 rounded-xl text-xs outline-none focus:ring-1 ring-indigo-300" value={inputMsg} onChange={(e) => setInputMsg(e.target.value)} />
-                <button type="submit" className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all"><Send size={16} /></button>
-              </form>
-            </div>
-          </div>
-        ) : (
-          /* 個人檔案 */
-          <div className="max-w-2xl mx-auto space-y-8 animate-in fade-in duration-500">
-            <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-200 flex flex-col items-center relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-24 bg-gradient-to-r from-indigo-500 to-purple-500 opacity-10"></div>
-              <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center text-4xl mb-4 border-4 border-indigo-50 shadow-xl z-10">{levelInfo.icon}</div>
-              
-              <div className="flex items-center gap-2 mb-2 z-10">
-                {isEditingName ? (
-                  <div className="flex items-center gap-1 border-b-2 border-indigo-500 pb-1">
-                    <input 
-                      type="text" 
-                      className="text-xl font-black text-center outline-none bg-transparent"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      autoFocus
-                    />
-                    <button onClick={handleUpdateName} className="text-emerald-500 hover:scale-110"><Check size={20} /></button>
-                  </div>
-                ) : (
-                  <>
-                    <h2 className="text-2xl font-black text-slate-800">{userData?.displayName}</h2>
-                    <button onClick={() => setIsEditingName(true)} className="text-slate-400 hover:text-indigo-500 transition-colors"><Edit2 size={16} /></button>
-                  </>
-                )}
-              </div>
-              
-              <p className="text-indigo-600 font-bold text-sm tracking-wide z-10">{levelInfo.level}</p>
-              
-              <div className="mt-8 w-full bg-slate-100 h-2 rounded-full overflow-hidden z-10">
-                <div className="bg-indigo-600 h-full transition-all duration-1000" style={{ width: `${Math.min(100, ((userData?.totalStudyTime || 0) / ((userData?.totalStudyTime || 0) + (levelInfo.next * 60))) * 100)}%` }}></div>
-              </div>
-              <p className="text-[10px] text-slate-400 mt-3 font-bold uppercase tracking-tighter z-10">
-                {levelInfo.next > 0 ? `距離升級還需專注 ${levelInfo.next} 分鐘` : '最高等級達成'}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-indigo-600 p-6 rounded-3xl text-white shadow-xl shadow-indigo-100">
-                <div className="bg-white/20 w-10 h-10 rounded-xl flex items-center justify-center mb-3"><Clock size={20}/></div>
-                <p className="text-indigo-100 text-[10px] font-bold uppercase tracking-widest mb-1">累積總時數</p>
-                <p className="text-3xl font-black">{formatToHours(userData?.totalStudyTime || 0)} <span className="text-sm font-normal">h</span></p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-slate-200">
-                <p className="text-slate-400 text-[10px] font-bold uppercase mb-1 tracking-widest">總專注秒數</p>
-                <p className="text-xl font-black font-mono text-slate-800">{userData?.totalStudyTime || 0}</p>
-              </div>
-              <div className="bg-white p-6 rounded-3xl border border-slate-200">
-                <p className="text-slate-400 text-[10px] font-bold uppercase mb-1 tracking-widest">已解鎖學科</p>
-                <p className="text-xl font-bold text-indigo-500">{subjectList.length} <span className="text-sm font-normal text-slate-400">科</span></p>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-3xl p-8 shadow-sm border border-slate-200">
-              <div className="flex items-center gap-2 mb-8 font-bold text-slate-800 border-b pb-4">
-                <PieChartIcon size={20} className="text-indigo-500" />
-                <span>各科學時圓餅圖 (小時)</span>
-              </div>
-              
-              <div className="flex flex-col md:flex-row items-center justify-around gap-12">
-                {pieChartData.length > 0 ? (
-                  <div className="relative w-48 h-48 transform -rotate-90">
-                    <svg viewBox="-1 -1 2 2" className="w-full h-full overflow-visible">
-                      {pieChartData.map((slice, i) => (
-                        <path 
-                          key={i} 
-                          d={slice.path} 
-                          fill={slice.color} 
-                          className="hover:opacity-80 transition-opacity cursor-pointer"
-                        />
-                      ))}
-                    </svg>
-                  </div>
-                ) : (
-                  <div className="w-48 h-48 bg-slate-50 rounded-full border border-dashed border-slate-200 flex items-center justify-center text-slate-300 text-[10px] text-center p-6">
-                    開始溫習來<br/>生成統計圖表
-                  </div>
-                )}
-
-                <div className="flex-1 space-y-4 w-full">
-                  {pieChartData.map((slice, i) => (
-                    <div key={i} className="flex flex-col gap-1.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: slice.color }}></div>
-                          <span className="text-sm font-bold text-slate-700">{slice.name}</span>
-                        </div>
-                        <span className="text-xs font-black text-indigo-600">{formatToHours(slice.seconds)}h ({slice.percent}%)</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                         <div className="h-full rounded-full transition-all duration-700" style={{ backgroundColor: slice.color, width: `${slice.percent}%` }}></div>
-                      </div>
-                    </div>
-                  ))}
-                  {pieChartData.length === 0 && <p className="text-xs text-slate-400 italic text-center">尚未有專注紀錄</p>}
-                </div>
-              </div>
-            </div>
-
-            <button onClick={() => setView('study')} className="w-full py-4 text-indigo-600 font-bold hover:bg-indigo-50 rounded-2xl transition-colors flex items-center justify-center gap-2">
-              返回溫習室 <ChevronRight size={18} />
-            </button>
-          </div>
-        )}
-      </main>
+        
+        <!-- 状态栏 -->
+        <div id="status">
+            <span id="status-dot" style="display:inline-block;width:10px;height:10px;background:#00ff00;border-radius:50%;animation: pulse 2s infinite;"></span>
+            <span id="status-text">加载中...</span>
+        </div>
     </div>
-  );
-}
+
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <!-- ml5.js（内置 MediaPipe Hands 模型，支持实时手掌追踪） -->
+    <script src="https://unpkg.com/ml5@1.0.0/dist/ml5.min.js"></script>
+
+    <script>
+        // ==================== 全局变量 ====================
+        let scene, camera, renderer;
+        let particlesMesh;
+        let particleCount = 4200;
+        let positions = new Float32Array(particleCount * 3);     // 当前位置
+        let targetPositions = new Float32Array(particleCount * 3); // 聚合目标（文字形状）
+        let dispersePositions = new Float32Array(particleCount * 3); // 散开目标
+        let velocities = new Float32Array(particleCount * 3);    // 平滑移动用
+        
+        let aggregationFactor = 0.0;   // 0 = 完全散开，1 = 完全聚拢
+        let currentHandOpenness = 0.0;
+        
+        let video;
+        let handPoseModel;
+        let hands = [];
+        let modelReady = false;
+        
+        let textCanvas;
+        
+        // ==================== 初始化 Three.js ====================
+        function initThree() {
+            const container = document.getElementById('container');
+            
+            // 场景
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x000022, 8, 35);
+            
+            // 相机
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 18);
+            
+            // 渲染器
+            renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = false;
+            container.appendChild(renderer.domElement);
+            
+            // 粒子材质（高亮发光效果）
+            const particleMaterial = new THREE.PointsMaterial({
+                size: 0.085,
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.92,
+                sizeAttenuation: true,
+                blending: THREE.AdditiveBlending,
+                depthTest: false
+            });
+            
+            // 粒子几何体
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            // 添加颜色属性（让粒子带渐变）
+            const colors = new Float32Array(particleCount * 3);
+            for (let i = 0; i < particleCount; i++) {
+                const hue = 0.5 + Math.random() * 0.3; // 青色 → 蓝色
+                const rgb = new THREE.Color().setHSL(hue, 1.0, 0.8);
+                colors[i * 3]     = rgb.r;
+                colors[i * 3 + 1] = rgb.g;
+                colors[i * 3 + 2] = rgb.b;
+            }
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            particlesMesh = new THREE.Points(geometry, particleMaterial);
+            scene.add(particlesMesh);
+            
+            // 轻微环境光
+            const ambient = new THREE.AmbientLight(0x112233, 0.6);
+            scene.add(ambient);
+            
+            // 窗口自适应
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            console.log('%c✅ Three.js 初始化完成', 'color:#00ffff;font-weight:bold');
+        }
+        
+        // ==================== 生成中文字粒子目标点 ====================
+        function generateTextParticles() {
+            // 创建离屏 Canvas 绘制中文
+            textCanvas = document.createElement('canvas');
+            textCanvas.width = 1024;
+            textCanvas.height = 512;
+            const ctx = textCanvas.getContext('2d');
+            
+            // 高清文字绘制
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 380px "Noto Sans SC", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.shadowBlur = 40;
+            ctx.shadowColor = '#00ffff';
+            
+            // 绘制「粒子」两个大字
+            ctx.fillText('粒子', textCanvas.width / 2, textCanvas.height / 2);
+            
+            // 获取像素数据
+            const imageData = ctx.getImageData(0, 0, textCanvas.width, textCanvas.height);
+            const data = imageData.data;
+            
+            const points2D = [];
+            
+            // 每 2.5 像素采样一次（平衡密度和性能）
+            for (let y = 0; y < textCanvas.height; y += 2.5) {
+                for (let x = 0; x < textCanvas.width; x += 2.5) {
+                    const index = (Math.floor(y) * textCanvas.width + Math.floor(x)) * 4;
+                    const alpha = data[index + 3];
+                    if (alpha > 80) {
+                        points2D.push({
+                            x: x - textCanvas.width / 2,
+                            y: textCanvas.height / 2 - y
+                        });
+                    }
+                }
+            }
+            
+            console.log(`📝 生成中文粒子采样点: ${points2D.length} 个`);
+            
+            // 将 2D 点映射到 3D 空间，并分配给粒子
+            const scale = 0.028;        // 文字整体缩放
+            const thickness = 1.8;      // 轻微 Z 厚度让文字更有立体感
+            
+            for (let i = 0; i < particleCount; i++) {
+                // 随机取一个文字上的点
+                const p = points2D[Math.floor(Math.random() * points2D.length)];
+                
+                // 聚合目标（文字形状）
+                targetPositions[i * 3]     = p.x * scale;
+                targetPositions[i * 3 + 1] = p.y * scale;
+                targetPositions[i * 3 + 2] = (Math.random() - 0.5) * thickness;
+                
+                // 散开目标（球形随机扩散）
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 9 + Math.random() * 12;
+                const elevation = (Math.random() - 0.5) * 8;
+                dispersePositions[i * 3]     = Math.cos(angle) * radius;
+                dispersePositions[i * 3 + 1] = elevation;
+                dispersePositions[i * 3 + 2] = Math.sin(angle) * radius;
+                
+                // 初始位置为完全散开状态
+                positions[i * 3]     = dispersePositions[i * 3];
+                positions[i * 3 + 1] = dispersePositions[i * 3 + 1];
+                positions[i * 3 + 2] = dispersePositions[i * 3 + 2];
+            }
+            
+            // 更新 Buffer
+            particlesMesh.geometry.attributes.position.needsUpdate = true;
+        }
+        
+        // ==================== 手掌张合检测（基于 MediaPipe 21 个关键点） ====================
+        function calculateHandOpenness(landmarks) {
+            if (!landmarks || landmarks.length < 21) return 0;
+            
+            // 21 个关键点坐标（x, y）
+            const wrist = landmarks[0];
+            
+            // 手掌大小参考（腕部 → 中指掌指关节）
+            const middleMCP = landmarks[9];
+            const handSize = Math.hypot(
+                middleMCP.x - wrist.x,
+                middleMCP.y - wrist.y
+            );
+            if (handSize < 30) return 0; // 手太小，忽略
+            
+            // 五个指尖
+            const tips = [
+                landmarks[4],  // 拇指
+                landmarks[8],  // 食指
+                landmarks[12], // 中指
+                landmarks[16], // 无名指
+                landmarks[20]  // 小指
+            ];
+            
+            let sumDist = 0;
+            for (let tip of tips) {
+                const dist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+                sumDist += dist;
+            }
+            
+            const avgDist = sumDist / 5;
+            
+            // 归一化：握拳 ≈ 0.6~0.9 × handSize，张开 ≈ 1.7~2.3 × handSize
+            let openness = (avgDist / handSize - 0.75) / 1.45;
+            openness = Math.max(0, Math.min(1, openness));
+            
+            return openness;
+        }
+        
+        // ==================== ml5 手势模型初始化 ====================
+        async function initHandTracking() {
+            video = document.getElementById('video');
+            
+            // 获取摄像头
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: "user"
+                    }
+                });
+                video.srcObject = stream;
+                await video.play();
+                
+                document.getElementById('status-text').innerHTML = '✅ 摄像头就绪 · 手势模型加载中...';
+                
+                // 初始化 ml5 handPose（内置 MediaPipe）
+                handPoseModel = await ml5.handPose(video, {
+                    flipHorizontal: true,
+                    maxHands: 1,
+                    modelType: "full"   // 使用完整模型，精度更高
+                });
+                
+                // 监听预测结果
+                handPoseModel.on('predict', (results) => {
+                    hands = results;
+                });
+                
+                modelReady = true;
+                document.getElementById('status-text').innerHTML = '🎮 实时手势追踪已启动';
+                console.log('%c✅ MediaPipe 手掌追踪模型加载完成', 'color:#00ff88;font-weight:bold');
+                
+            } catch (err) {
+                console.error(err);
+                document.getElementById('status-text').innerHTML = '❌ 摄像头访问失败';
+                document.getElementById('status-dot').style.background = '#ff0000';
+            }
+        }
+        
+        // ==================== 动画主循环 ====================
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (!particlesMesh) return;
+            
+            // 更新手掌张合状态
+            if (modelReady && hands && hands.length > 0) {
+                const openness = calculateHandOpenness(hands[0].keypoints);
+                currentHandOpenness = openness;
+                
+                // 握拳（张合度低）→ 聚拢
+                // 张开手掌（张合度高）→ 散开
+                aggregationFactor = 1 - currentHandOpenness;
+                
+                // 状态栏显示实时张合度
+                document.getElementById('status-text').innerHTML = 
+                    `手掌张开度: ${(currentHandOpenness*100).toFixed(0)}% ` +
+                    (currentHandOpenness > 0.65 ? '🖐️ 散开' : '👊 聚拢');
+            } else {
+                // 无手时缓慢自动演示
+                aggregationFactor = Math.sin(Date.now() * 0.001) * 0.5 + 0.5;
+            }
+            
+            // 粒子位置插值（平滑移动）
+            const lerpSpeed = 0.12;
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                
+                // 当前目标 = 文字位置 * 聚拢因子 + 散开位置 * 散开因子
+                const tx = targetPositions[i3] * aggregationFactor + dispersePositions[i3] * (1 - aggregationFactor);
+                const ty = targetPositions[i3 + 1] * aggregationFactor + dispersePositions[i3 + 1] * (1 - aggregationFactor);
+                const tz = targetPositions[i3 + 2] * aggregationFactor + dispersePositions[i3 + 2] * (1 - aggregationFactor);
+                
+                // 带速度的平滑插值（避免抖动）
+                velocities[i3]     = (velocities[i3] || 0) * 0.85 + (tx - positions[i3]) * lerpSpeed;
+                velocities[i3 + 1] = (velocities[i3 + 1] || 0) * 0.85 + (ty - positions[i3 + 1]) * lerpSpeed;
+                velocities[i3 + 2] = (velocities[i3 + 2] || 0) * 0.85 + (tz - positions[i3 + 2]) * lerpSpeed;
+                
+                positions[i3]     += velocities[i3];
+                positions[i3 + 1] += velocities[i3 + 1];
+                positions[i3 + 2] += velocities[i3 + 2];
+            }
+            
+            // 更新 GPU Buffer
+            particlesMesh.geometry.attributes.position.needsUpdate = true;
+            
+            // 粒子整体缓慢旋转（增加 3D 空间感）
+            particlesMesh.rotation.y = Math.sin(Date.now() * 0.0003) * 0.15;
+            
+            renderer.render(scene, camera);
+        }
+        
+        // ==================== 启动所有模块 ====================
+        async function start() {
+            initThree();
+            generateTextParticles();
+            await initHandTracking();
+            animate();
+            
+            console.log('%c🚀 基于 WebGL + 摄像头的手掌控制粒子中文字 3D 网页启动完成！', 'color:#00ffff;font-size:18px');
+            console.log('手势说明：握拳 = 聚拢成「粒子」文字，张开手掌 = 粒子散开');
+        }
+        
+        // 页面加载后立即启动
+        window.onload = start;
+    </script>
+</body>
+</html>
