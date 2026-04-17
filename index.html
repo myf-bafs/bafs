@@ -3,417 +3,248 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>掌控粒子 · 中文字 3D 交互</title>
+    <title>交互式手势控制3D粒子爱心</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@700&display=swap');
-        
         body {
             margin: 0;
-            padding: 0;
             overflow: hidden;
-            background: #000;
-            font-family: 'Noto Sans SC', sans-serif;
+            background-color: #000;
+            color: #fff;
+            font-family: sans-serif;
         }
-        
-        #container {
-            position: relative;
+        #webgl-canvas {
+            display: block;
             width: 100vw;
             height: 100vh;
         }
-        
-        canvas {
-            display: block;
-        }
-        
-        #overlay {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: rgba(255,255,255,0.9);
-            background: rgba(0,0,0,0.6);
-            padding: 15px 20px;
-            border-radius: 12px;
-            backdrop-filter: blur(10px);
-            z-index: 100;
-            max-width: 320px;
-            box-shadow: 0 8px 32px rgba(0, 255, 255, 0.2);
-        }
-        
-        #status {
+        #video-container {
             position: absolute;
             bottom: 20px;
-            left: 20px;
-            color: #00ffff;
-            font-size: 14px;
-            background: rgba(0,0,0,0.6);
-            padding: 8px 16px;
-            border-radius: 30px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            z-index: 100;
-        }
-        
-        #video {
-            position: absolute;
-            top: 20px;
             right: 20px;
-            width: 200px;
-            height: 150px;
-            border: 3px solid #00ffff;
-            border-radius: 12px;
-            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
-            z-index: 100;
-            transform: scaleX(-1);
+            width: 240px;
+            height: 180px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 2px solid #ff4d6d;
+            box-shadow: 0 0 15px rgba(255, 77, 109, 0.5);
+            transform: scaleX(-1); /* 镜像翻转摄像头画面 */
+        }
+        video {
+            width: 100%;
+            height: 100%;
             object-fit: cover;
         }
-        
-        .title {
-            font-size: 28px;
-            margin: 0 0 10px 0;
-            text-shadow: 0 0 15px #00ffff;
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            pointer-events: none;
+            transition: opacity 0.5s;
         }
-        
-        .hint {
-            font-size: 15px;
-            line-height: 1.4;
+        #tips {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 18px;
+            pointer-events: none;
+            text-shadow: 0 0 5px #000;
         }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 </head>
 <body>
-    <div id="container">
-        <!-- Three.js 渲染画布将自动插入 -->
-        
-        <!-- 摄像头预览 -->
-        <video id="video" autoplay playsinline></video>
-        
-        <!-- 左上角信息面板 -->
-        <div id="overlay">
-            <div class="title">掌控粒子</div>
-            <div class="hint">
-                📹 摄像头已开启<br>
-                ✋ 将手掌对准镜头<br>
-                👊 <strong>握拳</strong> → 粒子聚拢成「粒子」<br>
-                🖐️ <strong>张开</strong> → 粒子向四周散开<br>
-                实时 WebGL + MediaPipe 手势追踪
-            </div>
-        </div>
-        
-        <!-- 状态栏 -->
-        <div id="status">
-            <span id="status-dot" style="display:inline-block;width:10px;height:10px;background:#00ff00;border-radius:50%;animation: pulse 2s infinite;"></span>
-            <span id="status-text">加载中...</span>
-        </div>
+
+    <div id="loading">正在加载模型和开启摄像头，请稍候并允许摄像头权限...</div>
+    <div id="tips">张开手掌：散开粒子<br>握拳/收拢：聚集爱心</div>
+    
+    <canvas id="webgl-canvas"></canvas>
+    <div id="video-container">
+        <video id="input-video" autoplay playsinline></video>
     </div>
 
-    <!-- Three.js -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
-    <!-- ml5.js（内置 MediaPipe Hands 模型，支持实时手掌追踪） -->
-    <script src="https://unpkg.com/ml5@1.0.0/dist/ml5.min.js"></script>
-
     <script>
-        // ==================== 全局变量 ====================
-        let scene, camera, renderer;
-        let particlesMesh;
-        let particleCount = 4200;
-        let positions = new Float32Array(particleCount * 3);     // 当前位置
-        let targetPositions = new Float32Array(particleCount * 3); // 聚合目标（文字形状）
-        let dispersePositions = new Float32Array(particleCount * 3); // 散开目标
-        let velocities = new Float32Array(particleCount * 3);    // 平滑移动用
-        
-        let aggregationFactor = 0.0;   // 0 = 完全散开，1 = 完全聚拢
-        let currentHandOpenness = 0.0;
-        
-        let video;
-        let handPoseModel;
-        let hands = [];
-        let modelReady = false;
-        
-        let textCanvas;
-        
-        // ==================== 初始化 Three.js ====================
-        function initThree() {
-            const container = document.getElementById('container');
+        // ==========================================
+        // 1. Three.js 3D 场景与粒子系统设置
+        // ==========================================
+        const canvas = document.getElementById('webgl-canvas');
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
+
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+
+        const particleCount = 8000; // 粒子数量
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(particleCount * 3);
+        const heartTargets = new Float32Array(particleCount * 3);
+        const randomTargets = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        const colorBase = new THREE.Color('#ff4d6d');
+        const colorVariation = new THREE.Color('#ffb3c1');
+
+        for (let i = 0; i < particleCount; i++) {
+            // 生成爱心形状的目标位置 (使用爱心数学参数方程)
+            const t = Math.random() * Math.PI * 2;
+            const r = Math.random(); // 用于生成实心/有厚度的感觉
             
-            // 场景
-            scene = new THREE.Scene();
-            scene.fog = new THREE.Fog(0x000022, 8, 35);
-            
-            // 相机
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.set(0, 0, 18);
-            
-            // 渲染器
-            renderer = new THREE.WebGLRenderer({
-                antialias: true,
-                alpha: true
-            });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            renderer.shadowMap.enabled = false;
-            container.appendChild(renderer.domElement);
-            
-            // 粒子材质（高亮发光效果）
-            const particleMaterial = new THREE.PointsMaterial({
-                size: 0.085,
-                color: 0x00ffff,
-                transparent: true,
-                opacity: 0.92,
-                sizeAttenuation: true,
-                blending: THREE.AdditiveBlending,
-                depthTest: false
-            });
-            
-            // 粒子几何体
-            const geometry = new THREE.BufferGeometry();
-            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            
-            // 添加颜色属性（让粒子带渐变）
-            const colors = new Float32Array(particleCount * 3);
-            for (let i = 0; i < particleCount; i++) {
-                const hue = 0.5 + Math.random() * 0.3; // 青色 → 蓝色
-                const rgb = new THREE.Color().setHSL(hue, 1.0, 0.8);
-                colors[i * 3]     = rgb.r;
-                colors[i * 3 + 1] = rgb.g;
-                colors[i * 3 + 2] = rgb.b;
-            }
-            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-            
-            particlesMesh = new THREE.Points(geometry, particleMaterial);
-            scene.add(particlesMesh);
-            
-            // 轻微环境光
-            const ambient = new THREE.AmbientLight(0x112233, 0.6);
-            scene.add(ambient);
-            
-            // 窗口自适应
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-            
-            console.log('%c✅ Three.js 初始化完成', 'color:#00ffff;font-weight:bold');
+            const hx = 16 * Math.pow(Math.sin(t), 3) * (0.5 + 0.5 * r);
+            const hy = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * (0.5 + 0.5 * r);
+            const hz = (Math.random() - 0.5) * 8; // Z轴厚度
+
+            heartTargets[i * 3] = hx;
+            heartTargets[i * 3 + 1] = hy;
+            heartTargets[i * 3 + 2] = hz;
+
+            // 生成随机散开的目标位置
+            const rx = (Math.random() - 0.5) * 150;
+            const ry = (Math.random() - 0.5) * 150;
+            const rz = (Math.random() - 0.5) * 150;
+
+            randomTargets[i * 3] = rx;
+            randomTargets[i * 3 + 1] = ry;
+            randomTargets[i * 3 + 2] = rz;
+
+            // 初始位置设为随机位置
+            positions[i * 3] = rx;
+            positions[i * 3 + 1] = ry;
+            positions[i * 3 + 2] = rz;
+
+            // 粒子颜色
+            const mixedColor = colorBase.clone().lerp(colorVariation, Math.random());
+            colors[i * 3] = mixedColor.r;
+            colors[i * 3 + 1] = mixedColor.g;
+            colors[i * 3 + 2] = mixedColor.b;
         }
-        
-        // ==================== 生成中文字粒子目标点 ====================
-        function generateTextParticles() {
-            // 创建离屏 Canvas 绘制中文
-            textCanvas = document.createElement('canvas');
-            textCanvas.width = 1024;
-            textCanvas.height = 512;
-            const ctx = textCanvas.getContext('2d');
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+        // 自定义着色器材质让粒子变成圆形发光点
+        const material = new THREE.PointsMaterial({
+            size: 0.8,
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.8,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        // 窗口大小适配
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ==========================================
+        // 2. MediaPipe 手势识别逻辑
+        // ==========================================
+        const videoElement = document.getElementById('input-video');
+        let targetState = 1; // 0 = 爱心 (聚攏), 1 = 散开 (张开)
+        let currentState = 1; // 当前平滑过渡状态
+
+        // 判断手掌是否张开的函数
+        function isHandOpen(landmarks) {
+            const wrist = landmarks[0];
+            let openFingers = 0;
+            // 指尖索引：食指(8), 中指(12), 无名指(16), 小指(20)
+            const tips = [8, 12, 16, 20];
+            // 掌指关节索引：(5, 9, 13, 17)
+            const mcps = [5, 9, 13, 17];
             
-            // 高清文字绘制
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 380px "Noto Sans SC", sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.shadowBlur = 40;
-            ctx.shadowColor = '#00ffff';
-            
-            // 绘制「粒子」两个大字
-            ctx.fillText('粒子', textCanvas.width / 2, textCanvas.height / 2);
-            
-            // 获取像素数据
-            const imageData = ctx.getImageData(0, 0, textCanvas.width, textCanvas.height);
-            const data = imageData.data;
-            
-            const points2D = [];
-            
-            // 每 2.5 像素采样一次（平衡密度和性能）
-            for (let y = 0; y < textCanvas.height; y += 2.5) {
-                for (let x = 0; x < textCanvas.width; x += 2.5) {
-                    const index = (Math.floor(y) * textCanvas.width + Math.floor(x)) * 4;
-                    const alpha = data[index + 3];
-                    if (alpha > 80) {
-                        points2D.push({
-                            x: x - textCanvas.width / 2,
-                            y: textCanvas.height / 2 - y
-                        });
-                    }
+            for (let i = 0; i < 4; i++) {
+                const tipDist = Math.hypot(landmarks[tips[i]].x - wrist.x, landmarks[tips[i]].y - wrist.y);
+                const mcpDist = Math.hypot(landmarks[mcps[i]].x - wrist.x, landmarks[mcps[i]].y - wrist.y);
+                // 如果指尖到手腕的距离大于掌关节到手腕的距离，说明该手指是伸直的
+                if (tipDist > mcpDist) {
+                    openFingers++;
                 }
             }
-            
-            console.log(`📝 生成中文粒子采样点: ${points2D.length} 个`);
-            
-            // 将 2D 点映射到 3D 空间，并分配给粒子
-            const scale = 0.028;        // 文字整体缩放
-            const thickness = 1.8;      // 轻微 Z 厚度让文字更有立体感
-            
-            for (let i = 0; i < particleCount; i++) {
-                // 随机取一个文字上的点
-                const p = points2D[Math.floor(Math.random() * points2D.length)];
-                
-                // 聚合目标（文字形状）
-                targetPositions[i * 3]     = p.x * scale;
-                targetPositions[i * 3 + 1] = p.y * scale;
-                targetPositions[i * 3 + 2] = (Math.random() - 0.5) * thickness;
-                
-                // 散开目标（球形随机扩散）
-                const angle = Math.random() * Math.PI * 2;
-                const radius = 9 + Math.random() * 12;
-                const elevation = (Math.random() - 0.5) * 8;
-                dispersePositions[i * 3]     = Math.cos(angle) * radius;
-                dispersePositions[i * 3 + 1] = elevation;
-                dispersePositions[i * 3 + 2] = Math.sin(angle) * radius;
-                
-                // 初始位置为完全散开状态
-                positions[i * 3]     = dispersePositions[i * 3];
-                positions[i * 3 + 1] = dispersePositions[i * 3 + 1];
-                positions[i * 3 + 2] = dispersePositions[i * 3 + 2];
-            }
-            
-            // 更新 Buffer
-            particlesMesh.geometry.attributes.position.needsUpdate = true;
+            // 如果有3个或以上的手指伸直，判定为手掌张开
+            return openFingers >= 3;
         }
-        
-        // ==================== 手掌张合检测（基于 MediaPipe 21 个关键点） ====================
-        function calculateHandOpenness(landmarks) {
-            if (!landmarks || landmarks.length < 21) return 0;
+
+        function onResults(results) {
+            document.getElementById('loading').style.opacity = '0';
             
-            // 21 个关键点坐标（x, y）
-            const wrist = landmarks[0];
-            
-            // 手掌大小参考（腕部 → 中指掌指关节）
-            const middleMCP = landmarks[9];
-            const handSize = Math.hypot(
-                middleMCP.x - wrist.x,
-                middleMCP.y - wrist.y
-            );
-            if (handSize < 30) return 0; // 手太小，忽略
-            
-            // 五个指尖
-            const tips = [
-                landmarks[4],  // 拇指
-                landmarks[8],  // 食指
-                landmarks[12], // 中指
-                landmarks[16], // 无名指
-                landmarks[20]  // 小指
-            ];
-            
-            let sumDist = 0;
-            for (let tip of tips) {
-                const dist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
-                sumDist += dist;
-            }
-            
-            const avgDist = sumDist / 5;
-            
-            // 归一化：握拳 ≈ 0.6~0.9 × handSize，张开 ≈ 1.7~2.3 × handSize
-            let openness = (avgDist / handSize - 0.75) / 1.45;
-            openness = Math.max(0, Math.min(1, openness));
-            
-            return openness;
-        }
-        
-        // ==================== ml5 手势模型初始化 ====================
-        async function initHandTracking() {
-            video = document.getElementById('video');
-            
-            // 获取摄像头
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        width: { ideal: 640 },
-                        height: { ideal: 480 },
-                        facingMode: "user"
-                    }
-                });
-                video.srcObject = stream;
-                await video.play();
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const isOpen = isHandOpen(landmarks);
                 
-                document.getElementById('status-text').innerHTML = '✅ 摄像头就绪 · 手势模型加载中...';
-                
-                // 初始化 ml5 handPose（内置 MediaPipe）
-                handPoseModel = await ml5.handPose(video, {
-                    flipHorizontal: true,
-                    maxHands: 1,
-                    modelType: "full"   // 使用完整模型，精度更高
-                });
-                
-                // 监听预测结果
-                handPoseModel.on('predict', (results) => {
-                    hands = results;
-                });
-                
-                modelReady = true;
-                document.getElementById('status-text').innerHTML = '🎮 实时手势追踪已启动';
-                console.log('%c✅ MediaPipe 手掌追踪模型加载完成', 'color:#00ff88;font-weight:bold');
-                
-            } catch (err) {
-                console.error(err);
-                document.getElementById('status-text').innerHTML = '❌ 摄像头访问失败';
-                document.getElementById('status-dot').style.background = '#ff0000';
+                // 张开手 = 散开 (1)； 握拳/收拢 = 爱心 (0)
+                targetState = isOpen ? 1 : 0;
             }
         }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
         
-        // ==================== 动画主循环 ====================
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        
+        hands.onResults(onResults);
+
+        const cameraMediaPipe = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+        cameraMediaPipe.start();
+
+        // ==========================================
+        // 3. 动画与渲染循环
+        // ==========================================
+        const clock = new THREE.Clock();
+
         function animate() {
             requestAnimationFrame(animate);
-            
-            if (!particlesMesh) return;
-            
-            // 更新手掌张合状态
-            if (modelReady && hands && hands.length > 0) {
-                const openness = calculateHandOpenness(hands[0].keypoints);
-                currentHandOpenness = openness;
-                
-                // 握拳（张合度低）→ 聚拢
-                // 张开手掌（张合度高）→ 散开
-                aggregationFactor = 1 - currentHandOpenness;
-                
-                // 状态栏显示实时张合度
-                document.getElementById('status-text').innerHTML = 
-                    `手掌张开度: ${(currentHandOpenness*100).toFixed(0)}% ` +
-                    (currentHandOpenness > 0.65 ? '🖐️ 散开' : '👊 聚拢');
-            } else {
-                // 无手时缓慢自动演示
-                aggregationFactor = Math.sin(Date.now() * 0.001) * 0.5 + 0.5;
-            }
-            
-            // 粒子位置插值（平滑移动）
-            const lerpSpeed = 0.12;
+            const delta = clock.getDelta();
+
+            // 平滑过渡状态 (Lerp)
+            currentState += (targetState - currentState) * delta * 5;
+
+            const positionsAttribute = geometry.attributes.position;
+            const posArray = positionsAttribute.array;
+
+            // 让整个粒子系统缓慢自转
+            particleSystem.rotation.y += delta * 0.5;
+
+            // 更新每个粒子的位置
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
                 
-                // 当前目标 = 文字位置 * 聚拢因子 + 散开位置 * 散开因子
-                const tx = targetPositions[i3] * aggregationFactor + dispersePositions[i3] * (1 - aggregationFactor);
-                const ty = targetPositions[i3 + 1] * aggregationFactor + dispersePositions[i3 + 1] * (1 - aggregationFactor);
-                const tz = targetPositions[i3 + 2] * aggregationFactor + dispersePositions[i3 + 2] * (1 - aggregationFactor);
-                
-                // 带速度的平滑插值（避免抖动）
-                velocities[i3]     = (velocities[i3] || 0) * 0.85 + (tx - positions[i3]) * lerpSpeed;
-                velocities[i3 + 1] = (velocities[i3 + 1] || 0) * 0.85 + (ty - positions[i3 + 1]) * lerpSpeed;
-                velocities[i3 + 2] = (velocities[i3 + 2] || 0) * 0.85 + (tz - positions[i3 + 2]) * lerpSpeed;
-                
-                positions[i3]     += velocities[i3];
-                positions[i3 + 1] += velocities[i3 + 1];
-                positions[i3 + 2] += velocities[i3 + 2];
+                // 目标位置：根据当前状态在“爱心”和“随机散开”之间插值
+                const targetX = THREE.MathUtils.lerp(heartTargets[i3], randomTargets[i3], currentState);
+                const targetY = THREE.MathUtils.lerp(heartTargets[i3 + 1], randomTargets[i3 + 1], currentState);
+                const targetZ = THREE.MathUtils.lerp(heartTargets[i3 + 2], randomTargets[i3 + 2], currentState);
+
+                // 让当前粒子位置平滑移动到目标位置
+                posArray[i3] += (targetX - posArray[i3]) * 0.1;
+                posArray[i3 + 1] += (targetY - posArray[i3 + 1]) * 0.1;
+                posArray[i3 + 2] += (targetZ - posArray[i3 + 2]) * 0.1;
             }
-            
-            // 更新 GPU Buffer
-            particlesMesh.geometry.attributes.position.needsUpdate = true;
-            
-            // 粒子整体缓慢旋转（增加 3D 空间感）
-            particlesMesh.rotation.y = Math.sin(Date.now() * 0.0003) * 0.15;
-            
+
+            positionsAttribute.needsUpdate = true;
             renderer.render(scene, camera);
         }
-        
-        // ==================== 启动所有模块 ====================
-        async function start() {
-            initThree();
-            generateTextParticles();
-            await initHandTracking();
-            animate();
-            
-            console.log('%c🚀 基于 WebGL + 摄像头的手掌控制粒子中文字 3D 网页启动完成！', 'color:#00ffff;font-size:18px');
-            console.log('手势说明：握拳 = 聚拢成「粒子」文字，张开手掌 = 粒子散开');
-        }
-        
-        // 页面加载后立即启动
-        window.onload = start;
+
+        animate();
     </script>
 </body>
 </html>
