@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>交互式手势控制3D粒子爱心</title>
+    <title>交互式手势控制 - 新會商會中學</title>
     <style>
         body {
             margin: 0;
@@ -25,9 +25,9 @@
             height: 180px;
             border-radius: 10px;
             overflow: hidden;
-            border: 2px solid #ff4d6d;
-            box-shadow: 0 0 15px rgba(255, 77, 109, 0.5);
-            transform: scaleX(-1); /* 镜像翻转摄像头画面 */
+            border: 2px solid #00d2ff;
+            box-shadow: 0 0 15px rgba(0, 210, 255, 0.5);
+            transform: scaleX(-1);
         }
         video {
             width: 100%;
@@ -59,7 +59,7 @@
 <body>
 
     <div id="loading">正在加载模型和开启摄像头，请稍候并允许摄像头权限...</div>
-    <div id="tips">张开手掌：散开粒子<br>握拳/收拢：聚集爱心</div>
+    <div id="tips">张开手掌：散开粒子<br>握拳/收拢：聚集校名</div>
     
     <canvas id="webgl-canvas"></canvas>
     <div id="video-container">
@@ -68,43 +68,78 @@
 
     <script>
         // ==========================================
-        // 1. Three.js 3D 场景与粒子系统设置
+        // 1. 获取文字的像素坐标点 (核心修改)
+        // ==========================================
+        function getTextPoints(text) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d', { willReadFrequently: true });
+            canvas.width = 1000; 
+            canvas.height = 300;
+
+            // 绘制文字
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = 'bold 120px "Microsoft YaHei", sans-serif'; // 设置字体大小和样式
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            const points = [];
+
+            // 采样像素点 (步长为 3，越小粒子越密集)
+            for (let y = 0; y < canvas.height; y += 3) {
+                for (let x = 0; x < canvas.width; x += 3) {
+                    const index = (y * canvas.width + x) * 4;
+                    const r = imgData[index]; // 获取红色通道值判断亮度
+                    
+                    if (r > 128) { // 如果是白色文字部分
+                        points.push({
+                            x: (x - canvas.width / 2) * 0.08,  // 居中并缩小比例以适应3D世界
+                            y: -(y - canvas.height / 2) * 0.08 // Y轴翻转，因为Canvas与WebGL的Y轴相反
+                        });
+                    }
+                }
+            }
+            return points;
+        }
+
+        const textPoints = getTextPoints('新會商會中學');
+
+        // ==========================================
+        // 2. Three.js 3D 场景与粒子系统设置
         // ==========================================
         const canvas = document.getElementById('webgl-canvas');
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.z = 50;
+        camera.position.z = 40; // 稍微拉近一点镜头
 
         const renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
 
-        const particleCount = 8000; // 粒子数量
+        const particleCount = 10000; // 增加粒子数量让文字更清晰
         const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
-        const heartTargets = new Float32Array(particleCount * 3);
+        const textTargets = new Float32Array(particleCount * 3);
         const randomTargets = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
 
-        const colorBase = new THREE.Color('#ff4d6d');
-        const colorVariation = new THREE.Color('#ffb3c1');
+        // 科技感蓝色调
+        const colorBase = new THREE.Color('#00d2ff');
+        const colorVariation = new THREE.Color('#3a7bd5');
 
         for (let i = 0; i < particleCount; i++) {
-            // 生成爱心形状的目标位置 (使用爱心数学参数方程)
-            const t = Math.random() * Math.PI * 2;
-            const r = Math.random(); // 用于生成实心/有厚度的感觉
-            
-            const hx = 16 * Math.pow(Math.sin(t), 3) * (0.5 + 0.5 * r);
-            const hy = (13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t)) * (0.5 + 0.5 * r);
-            const hz = (Math.random() - 0.5) * 8; // Z轴厚度
-
-            heartTargets[i * 3] = hx;
-            heartTargets[i * 3 + 1] = hy;
-            heartTargets[i * 3 + 2] = hz;
+            // 文字目标位置：循环从采样点中取值
+            const tp = textPoints[i % textPoints.length];
+            textTargets[i * 3] = tp.x;
+            textTargets[i * 3 + 1] = tp.y;
+            textTargets[i * 3 + 2] = (Math.random() - 0.5) * 3; // 给平面文字增加一点 Z 轴厚度
 
             // 生成随机散开的目标位置
-            const rx = (Math.random() - 0.5) * 150;
-            const ry = (Math.random() - 0.5) * 150;
-            const rz = (Math.random() - 0.5) * 150;
+            const rx = (Math.random() - 0.5) * 200;
+            const ry = (Math.random() - 0.5) * 200;
+            const rz = (Math.random() - 0.5) * 200;
 
             randomTargets[i * 3] = rx;
             randomTargets[i * 3 + 1] = ry;
@@ -125,9 +160,8 @@
         geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-        // 自定义着色器材质让粒子变成圆形发光点
         const material = new THREE.PointsMaterial({
-            size: 0.8,
+            size: 0.6, // 缩小单个粒子让文字边缘更细腻
             vertexColors: true,
             transparent: true,
             opacity: 0.8,
@@ -138,7 +172,6 @@
         const particleSystem = new THREE.Points(geometry, material);
         scene.add(particleSystem);
 
-        // 窗口大小适配
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
@@ -146,30 +179,25 @@
         });
 
         // ==========================================
-        // 2. MediaPipe 手势识别逻辑
+        // 3. MediaPipe 手势识别逻辑 (保持不变)
         // ==========================================
         const videoElement = document.getElementById('input-video');
-        let targetState = 1; // 0 = 爱心 (聚攏), 1 = 散开 (张开)
-        let currentState = 1; // 当前平滑过渡状态
+        let targetState = 1; 
+        let currentState = 1; 
 
-        // 判断手掌是否张开的函数
         function isHandOpen(landmarks) {
             const wrist = landmarks[0];
             let openFingers = 0;
-            // 指尖索引：食指(8), 中指(12), 无名指(16), 小指(20)
             const tips = [8, 12, 16, 20];
-            // 掌指关节索引：(5, 9, 13, 17)
             const mcps = [5, 9, 13, 17];
             
             for (let i = 0; i < 4; i++) {
                 const tipDist = Math.hypot(landmarks[tips[i]].x - wrist.x, landmarks[tips[i]].y - wrist.y);
                 const mcpDist = Math.hypot(landmarks[mcps[i]].x - wrist.x, landmarks[mcps[i]].y - wrist.y);
-                // 如果指尖到手腕的距离大于掌关节到手腕的距离，说明该手指是伸直的
                 if (tipDist > mcpDist) {
                     openFingers++;
                 }
             }
-            // 如果有3个或以上的手指伸直，判定为手掌张开
             return openFingers >= 3;
         }
 
@@ -179,9 +207,7 @@
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
                 const isOpen = isHandOpen(landmarks);
-                
-                // 张开手 = 散开 (1)； 握拳/收拢 = 爱心 (0)
-                targetState = isOpen ? 1 : 0;
+                targetState = isOpen ? 1 : 0; // 张开散开(1)，握拳聚拢文字(0)
             }
         }
 
@@ -208,36 +234,44 @@
         cameraMediaPipe.start();
 
         // ==========================================
-        // 3. 动画与渲染循环
+        // 4. 动画与渲染循环
         // ==========================================
         const clock = new THREE.Clock();
+        let mouseX = 0;
+        let mouseY = 0;
+
+        // 添加简单的鼠标/触摸跟随，让粒子文字看起来更立体生动
+        document.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+        });
 
         function animate() {
             requestAnimationFrame(animate);
             const delta = clock.getDelta();
 
-            // 平滑过渡状态 (Lerp)
             currentState += (targetState - currentState) * delta * 5;
 
             const positionsAttribute = geometry.attributes.position;
             const posArray = positionsAttribute.array;
 
-            // 让整个粒子系统缓慢自转
-            particleSystem.rotation.y += delta * 0.5;
+            // 让文字系统轻微跟随鼠标晃动，体现3D空间感
+            particleSystem.rotation.y += (mouseX * 0.5 - particleSystem.rotation.y) * 0.05;
+            particleSystem.rotation.x += (-mouseY * 0.2 - particleSystem.rotation.x) * 0.05;
 
-            // 更新每个粒子的位置
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
                 
-                // 目标位置：根据当前状态在“爱心”和“随机散开”之间插值
-                const targetX = THREE.MathUtils.lerp(heartTargets[i3], randomTargets[i3], currentState);
-                const targetY = THREE.MathUtils.lerp(heartTargets[i3 + 1], randomTargets[i3 + 1], currentState);
-                const targetZ = THREE.MathUtils.lerp(heartTargets[i3 + 2], randomTargets[i3 + 2], currentState);
+                const targetX = THREE.MathUtils.lerp(textTargets[i3], randomTargets[i3], currentState);
+                const targetY = THREE.MathUtils.lerp(textTargets[i3 + 1], randomTargets[i3 + 1], currentState);
+                const targetZ = THREE.MathUtils.lerp(textTargets[i3 + 2], randomTargets[i3 + 2], currentState);
 
-                // 让当前粒子位置平滑移动到目标位置
-                posArray[i3] += (targetX - posArray[i3]) * 0.1;
-                posArray[i3 + 1] += (targetY - posArray[i3 + 1]) * 0.1;
-                posArray[i3 + 2] += (targetZ - posArray[i3 + 2]) * 0.1;
+                // 根据聚集/散开状态设置不同的移动速度，聚拢时快，散开时慢且飘逸
+                const speed = targetState === 0 ? 0.15 : 0.05;
+
+                posArray[i3] += (targetX - posArray[i3]) * speed;
+                posArray[i3 + 1] += (targetY - posArray[i3 + 1]) * speed;
+                posArray[i3 + 2] += (targetZ - posArray[i3 + 2]) * speed;
             }
 
             positionsAttribute.needsUpdate = true;
