@@ -101,27 +101,6 @@
             min-height: 80px;
         }
 
-        .timer-bar-wrap {
-            width: 100%;
-            height: 8px;
-            background: #ecf0f1;
-            border-radius: 4px;
-            margin: 12px 0 6px;
-            overflow: hidden;
-        }
-        .timer-bar {
-            height: 100%;
-            width: 100%;
-            background: #2ecc71;
-            border-radius: 4px;
-            transition: width 0.3s linear;
-        }
-        .timer-text {
-            font-size: 0.9rem;
-            color: #7f8c8d;
-            text-align: center;
-        }
-        .timer-text.warning { color: #e74c3c; font-weight: bold; }
         .opt-btn.disabled { opacity: 0.4; cursor: not-allowed; }
 
         .answer-zone {
@@ -199,18 +178,50 @@
         }
         .success-box { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .error-box { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            .game-container { padding: 15px; }
+            h1 { font-size: 1.3rem; }
+            .subtitle { font-size: 0.85rem; }
+            .equation-dashboard {
+                flex-wrap: wrap;
+                gap: 6px;
+                padding: 12px;
+                font-size: 1rem;
+            }
+            .eq-box {
+                min-width: 0;
+                padding: 6px 10px;
+                font-size: 0.85rem;
+                flex: 1;
+            }
+            .answer-zone {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .choice-section { padding: 10px; }
+            .choice-section h3 { font-size: 1rem; }
+            .opt-btn { padding: 12px 8px; font-size: 0.9rem; }
+            .event-card { padding: 15px; }
+            .card-title { font-size: 1.1rem; }
+            .card-text { font-size: 1rem; }
+            .control-btns { flex-direction: column; gap: 10px; }
+            .main-btn { padding: 12px; font-size: 1rem; }
+            .feedback { font-size: 1.1rem; }
+        }
     </style>
 </head>
 <body>
 
 <div class="game-container">
     <h1>🃏 BAFS 會計等式卡牌流動戰</h1>
-    <div class="subtitle">學習目標：掌握日常交易如何影響 資產 = 資本 + 負債</div>
+    <div class="subtitle">學習目標：掌握日常交易如何影響 資產 = 資本 + 收益 − 費用 + 負債</div>
 
     <div class="equation-dashboard">
         <div class="eq-box bg-asset">資產 (Assets)</div>
         <div>＝</div>
-        <div class="eq-box bg-capital">資本 (Capital)</div>
+        <div class="eq-box bg-capital">資本＋收益−費用</div>
         <div>＋</div>
         <div class="eq-box bg-liability">負債 (Liabilities)</div>
     </div>
@@ -219,10 +230,7 @@
         <div class="event-card">
             <div class="card-title" id="cardNo">情景卡片 1 / 8</div>
             <div class="card-text" id="cardText">正在載入日常情景...</div>
-            <div class="timer-bar-wrap">
-                <div class="timer-bar" id="timerBar"></div>
-            </div>
-            <div class="timer-text" id="timerText">⏱ 剩餘 10 秒</div>
+
         </div>
     </div>
 
@@ -277,49 +285,6 @@
 
     let currentIdx = 0;
     let currentSelection = { A: null, C: null, L: null };
-    let timerInterval = null;
-    let timeLeft = 10;
-    let timeUp = false;
-
-    function startTimer() {
-        clearInterval(timerInterval);
-        const bar = document.getElementById("timerBar");
-        const text = document.getElementById("timerText");
-        timeLeft = 10;
-        timeUp = false;
-        bar.style.width = "100%";
-        text.innerText = "⏱ 剩餘 10 秒";
-        text.className = "timer-text";
-
-        timerInterval = setInterval(() => {
-            timeLeft--;
-            const pct = (timeLeft / 10) * 100;
-            bar.style.width = pct + "%";
-            text.innerText = `⏱ 剩餘 ${timeLeft} 秒`;
-
-            if (timeLeft <= 3) {
-                text.className = "timer-text warning";
-                bar.style.background = pct > 20 ? "#e67e22" : "#e74c3c";
-            }
-
-            if (timeLeft <= 0) {
-                clearInterval(timerInterval);
-                timeUp = true;
-                text.innerText = "⏰ 時間到！";
-                text.className = "timer-text warning";
-                bar.style.width = "0%";
-                disableButtons(true);
-                revealAnswer();
-            }
-        }, 1000);
-    }
-
-    function disableButtons(disabled) {
-        document.querySelectorAll('.opt-btn').forEach(btn => {
-            if (disabled) btn.classList.add('disabled');
-            else btn.classList.remove('disabled');
-        });
-    }
 
     function loadCard() {
         if(currentIdx >= cards.length) {
@@ -336,13 +301,10 @@
             btn.className = "opt-btn";
         });
         document.getElementById("feedbackBox").style.display = "none";
-        disableButtons(false);
-        document.getElementById("timerBar").style.background = "#2ecc71";
-        startTimer();
+        document.querySelectorAll('.opt-btn').forEach(btn => btn.classList.remove('disabled'));
     }
 
     function selectOpt(type, val) {
-        if (timeUp) return;
         currentSelection[type] = val;
         
         const prefix = type.toLowerCase();
@@ -356,33 +318,13 @@
         if(val === 'none') targetBtn.classList.add('selected-none');
     }
 
-    function revealAnswer() {
-        clearInterval(timerInterval);
-        const answer = cards[currentIdx];
-        const fBox = document.getElementById("feedbackBox");
-        const translate = (v) => v === 'plus' ? '增加(+' : (v === 'minus' ? '減少(-)' : '無變動(0)');
-        
-        fBox.style.display = "block";
-        fBox.className = "feedback error-box";
-        fBox.innerHTML = `⏰ 時間到！<br>
-                          <small style="font-size:1rem; font-weight:normal;">
-                            正確答案：<br>
-                            <strong>資產:</strong> ${translate(answer.A)} | 
-                            <strong>資本:</strong> ${translate(answer.C)} | 
-                            <strong>負債:</strong> ${translate(answer.L)}
-                            <br><br>👉 <strong>會計點撥：</strong>${answer.exp}
-                          </small>`;
-    }
-
     function checkAnswer() {
-        if(timeUp) return;
         if(!currentSelection.A || !currentSelection.C || !currentSelection.L) {
             alert("⚠️ 請先完成 資產、資本 和 負債 三個範疇的變動預測！");
             return;
         }
 
-        clearInterval(timerInterval);
-        disableButtons(true);
+        document.querySelectorAll('.opt-btn').forEach(btn => btn.classList.add('disabled'));
 
         const answer = cards[currentIdx];
         const fBox = document.getElementById("feedbackBox");
@@ -410,7 +352,6 @@
     }
 
     function nextCard() {
-        clearInterval(timerInterval);
         currentIdx++;
         loadCard();
     }
