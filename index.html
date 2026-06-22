@@ -1,4 +1,3 @@
-```html
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -102,6 +101,37 @@
         }
 
         .opt-btn.disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .hint-area {
+            margin-top: 12px;
+            text-align: center;
+        }
+        .hint-btn {
+            background: none;
+            border: 2px dashed #f39c12;
+            color: #f39c12;
+            padding: 6px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        .hint-btn:hover {
+            background: #f39c12;
+            color: white;
+        }
+        .hint-text {
+            margin-top: 8px;
+            padding: 10px 14px;
+            background: #fef9e7;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            color: #7d6608;
+            display: none;
+            line-height: 1.5;
+        }
+        .hint-text.show { display: block; }
 
         .answer-zone {
             display: grid;
@@ -230,7 +260,10 @@
         <div class="event-card">
             <div class="card-title" id="cardNo">情景卡片 1 / 8</div>
             <div class="card-text" id="cardText">正在載入日常情景...</div>
-
+            <div class="hint-area">
+                <button class="hint-btn" onclick="toggleHint()">💡 提示</button>
+                <div class="hint-text" id="hintText"></div>
+            </div>
         </div>
     </div>
 
@@ -273,18 +306,23 @@
 
 <script>
     const cards = [
-        { title: "【午餐花費】", text: "你用八達通在學校飯堂花了 $35 購買午餐食用。", A: "minus", C: "minus", L: "none", exp: "八達通（資產）減少；購買午餐屬於日常開支，會使利潤減少，因此資本也跟著減少。" },
-        { title: "【收到利是】", text: "過年時你收到父母給予的 $500 利是錢，並放入錢包。", A: "plus", C: "plus", L: "none", exp: "現金（資產）增加；利是錢視為資本注入，資本也隨之增加。" },
-        { title: "【湊錢叫外賣】", text: "你和朋友一起叫外賣，但現金不足，先向朋友借了 $30 支付。", A: "plus", C: "none", L: "plus", exp: "獲得外賣食物（資產+）；但欠下朋友債務，負債也增加。" },
-        { title: "【還錢給朋友】", text: "第二天你用現金 $30 還給昨天借錢給你的朋友。", A: "minus", C: "none", L: "minus", exp: "現金減少（資產-）；還清欠款，負債也隨之減少。" },
-        { title: "【課金消費】", text: "你從自己經營的小生意銀行戶口中，提取了 $200 去購買手機遊戲造型。", A: "minus", C: "minus", L: "none", exp: "銀行存款減少（資產-）；東主提取公司資金自用（提用），資本減少。" },
-        { title: "【八達通增值】", text: "你用現金 $100 到便利店為自己的八達通卡增值。", A: "none", C: "none", L: "none", exp: "特別注意！八達通增加（資產+）但現金減少（資產-），屬於資產內部轉換，總資產不變，資本和負債均不受影響。" },
-        { title: "【補習收入】", text: "你上個月幫助學弟補習數學，今天收到他支付的 $200 補習費現金。", A: "plus", C: "plus", L: "none", exp: "現金增加（資產+）；賺取的收入增加公司利潤，資本也隨之增加。" },
-        { title: "【網購衣服】", text: "你在網店購買了一件 $150 的衣服，選擇了「貨到付款」尚未付款。", A: "plus", C: "none", L: "plus", exp: "收到衣服（資產+）；但尚未付款，欠網店的債務（負債）增加。" }
+        { title: "【午餐花費】", text: "你用八達通在學校飯堂花了 $35 購買午餐食用。", A: "minus", C: "minus", L: "none", hint: "八達通是資產。日常開支會影響資本。", exp: "八達通（資產）減少；購買午餐屬於日常開支，會使利潤減少，因此資本也跟著減少。" },
+        { title: "【收到利是】", text: "過年時你收到父母給予的 $500 利是錢，並放入錢包。", A: "plus", C: "plus", L: "none", hint: "現金增加。利是錢屬於資本注入。", exp: "現金（資產）增加；利是錢視為資本注入，資本也隨之增加。" },
+        { title: "【湊錢叫外賣】", text: "你和朋友一起叫外賣，但現金不足，先向朋友借了 $30 支付。", A: "plus", C: "none", L: "plus", hint: "獲得食物但現金沒有減少？欠下了一筆債。", exp: "獲得外賣食物（資產+）；但欠下朋友債務，負債也增加。" },
+        { title: "【還錢給朋友】", text: "第二天你用現金 $30 還給昨天借錢給你的朋友。", A: "minus", C: "none", L: "minus", hint: "現金減少。還清欠款後債務會怎樣？", exp: "現金減少（資產-）；還清欠款，負債也隨之減少。" },
+        { title: "【課金消費】", text: "你從自己經營的小生意銀行戶口中，提取了 $200 去購買手機遊戲造型。", A: "minus", C: "minus", L: "none", hint: "銀行存款減少。東主提取資金自用會影響資本。", exp: "銀行存款減少（資產-）；東主提取公司資金自用（提用），資本減少。" },
+        { title: "【八達通增值】", text: "你用現金 $100 到便利店為自己的八達通卡增值。", A: "none", C: "none", L: "none", hint: "現金和八達通都是資產。資產內部轉換。", exp: "特別注意！八達通增加（資產+）但現金減少（資產-），屬於資產內部轉換，總資產不變，資本和負債均不受影響。" },
+        { title: "【補習收入】", text: "你上個月幫助學弟補習數學，今天收到他支付的 $200 補習費現金。", A: "plus", C: "plus", L: "none", hint: "收到現金。賺取的收入會增加資本。", exp: "現金增加（資產+）；賺取的收入增加公司利潤，資本也隨之增加。" },
+        { title: "【網購衣服】", text: "你在網店購買了一件 $150 的衣服，選擇了「貨到付款」尚未付款。", A: "plus", C: "none", L: "plus", hint: "收到衣服但尚未付款，欠下債務。", exp: "收到衣服（資產+）；但尚未付款，欠網店的債務（負債）增加。" }
     ];
 
     let currentIdx = 0;
     let currentSelection = { A: null, C: null, L: null };
+
+    function toggleHint() {
+        const el = document.getElementById("hintText");
+        el.classList.toggle("show");
+    }
 
     function loadCard() {
         if(currentIdx >= cards.length) {
@@ -295,6 +333,8 @@
         const card = cards[currentIdx];
         document.getElementById("cardNo").innerText = `情景卡片 ${currentIdx + 1} / ${cards.length} ${card.title}`;
         document.getElementById("cardText").innerText = card.text;
+        document.getElementById("hintText").innerText = card.hint;
+        document.getElementById("hintText").classList.remove("show");
         
         currentSelection = { A: null, C: null, L: null };
         document.querySelectorAll('.opt-btn').forEach(btn => {
